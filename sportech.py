@@ -103,15 +103,18 @@ class Sport(db.Model):
     limit = db.Column(db.Integer)
     events = db.relationship('Event', backref='sport', cascade='all', lazy='dynamic')
 
-    def validate(self, json):
+    def validate(self):
         pass
 
-    def from_json(self, json):
-        pass
+    def from_json(self):
+        self.validate()
+        self.name = request.args.get('name')
+        self.limit = int(request.args.get('limit', default=1))
+        return self
 
-    def to_json(self, json):
-        pass
 
+    def to_json(self):
+        return {'id' : self.id, 'name' : self.name, 'limit': self.limit }
 
 class TeamEvent(db.Model):
     __tablename__ = 'team_event'
@@ -124,6 +127,7 @@ class TeamEvent(db.Model):
 
 
 class InstitutesAPI(Resource):
+    ''' returns a list of institutions '''
 
     def get(self):
         institutes = [insti.to_json() for insti in Institute.query.all()]
@@ -135,8 +139,30 @@ class InstitutesAPI(Resource):
         db.session.commit()
         return 201
 
+class InstituteAPI(Resource):
+    def get(self, id):
+        insti = Institute.query.get_or_404(id)
+        return jsonify({ 'institute' : insti.to_json() })
+
+class SportsAPI(Resource):
+
+    def get(self):
+        sports = [sport.to_json() for sport in Sport.query.all()]
+        return jsonify({'sports': sports })
+
+    def post(self):
+        sport = Sport().from_json()
+        db.session.add(sport)
+        db.session.commit()
+        return {}, 201
+
+
+# routes
 api.add_resource(InstitutesAPI, '/api/institutes/')
+api.add_resource(InstituteAPI, '/api/institute/<int:id>')
+api.add_resource(SportsAPI, '/api/sports/')
+
 
 if __name__ == '__main__':
     db.create_all()
-    app.run()
+    app.run(debug=True)
