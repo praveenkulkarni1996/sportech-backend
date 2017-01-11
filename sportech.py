@@ -2,7 +2,7 @@ from flask import Flask, jsonify, request
 from flask.ext.sqlalchemy import SQLAlchemy
 from sqlalchemy import UniqueConstraint
 from flask_restful import Resource, Api
-# import sqlite3
+import json
 
 app = Flask(__name__)
 app.config.from_pyfile('config.py')
@@ -21,11 +21,12 @@ class Person(db.Model):
     def validate(self, json):
         pass
 
-    def from_json(self, json):
+    def from_json(self, json, team_id):
         self.validate(json)
         self.name = json['name']
         self.email = json['email']
         self.phone = json['phone']
+        self.team_id = team_id
         return self
 
     def to_json(self):
@@ -33,7 +34,7 @@ class Person(db.Model):
         json_resp['name'] = self.name
         json_resp['email'] = self.email
         json_resp['phone'] = self.phone
-        json_resp['team'] = self.team_id
+        # json_resp['team'] = self.team_id
         return json_resp
 
 class Team(db.Model):
@@ -45,17 +46,27 @@ class Team(db.Model):
     # institute : backref from Institute
     # events: backref from TeamSport
 
-    def validate(self, json):
+    def validate(self):
         pass
-
 
     def from_json(self, json):
-        pass
-
+        self.validate()
+        # self.id = json['id']
+        self.gender = json['gender'] == 'male'
+        self.institute_id = json['institute_id']
+        # players = []
+        # for person in request.args.get('players'):
+        #     players.append(Person().from_json(person))
+        return self
 
     def to_json(self):
-        pass
-
+        resp = {}
+        resp['id'] = self.id
+        resp['gender'] = 'male' if self.gender else 'female'
+        resp['players'] = [person.to_json() for person in Person.query.all()]
+        resp['institute'] = self.institute.to_json()
+        resp['events'] = [event.to_json() for event in self.events]
+        return resp
 
 class Institute(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -73,8 +84,6 @@ class Institute(db.Model):
     def to_json(self):
         return { 'id' : self.id, 'name' : self.name }
 
-
-
 class Event(db.Model):
     __tablename__ = 'event'
     id = db.Column(db.Integer, primary_key=True)
@@ -87,15 +96,28 @@ class Event(db.Model):
     # teams : backref form TeamEvent
     # sport : from the sports table
 
-    def validate(self, json):
+    def validate(self):
         pass
 
-    def from_json(self, json):
-        pass
+    def from_json(self):
+        self.validate()
+        self.name = request.args.get('name')
+        self.min_players = int(request.args.get('min_players'))
+        self.max_players = int(request.args.get('max_players'))
+        self.gender = request.args.get('gender') == 'male'
+        self.fee = int(request.args.get('fee'))
+        self.sport_id = int(request.args.get('sport_id'))
+        return self
 
-    def to_json(self, json):
-        pass
-
+    def to_json(self):
+        resp = {}
+        resp['name'] = self.name
+        resp['min_players'] = self.min_players
+        resp['max_players'] = self.max_players
+        resp['gender'] = 'male' if self.gender else 'female'
+        resp['fee'] = self.fee
+        resp['sport'] = self.sport.to_json()
+        return resp
 
 class Sport(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -120,11 +142,27 @@ class TeamEvent(db.Model):
     __tablename__ = 'team_event'
     __table_args__ = (UniqueConstraint('team_id', 'event_id', name="uc_team_id_event_id"),)
     id = db.Column(db.Integer, primary_key=True)
+    # paid = db.Column(db.Boolean)
     team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='CASCADE'))
     event_id = db.Column(db.Integer, db.ForeignKey('event.id', ondelete='CASCADE'))
     team = db.relationship('Team', backref=db.backref("events"))
     event = db.relationship('Event', backref=db.backref("teams"))
 
+    def __init__(self, event_id, team_id):
+        self.team_id = team_id
+        self.event_id = event_id
+        # self.paid = False
+
+    #
+    # def validate(self):
+    #     pass
+    #
+    # def from_json(self, events, team_id):
+    #     pass
+    #
+    def to_json(self):
+        return {'event' : self.event.to_json() }
+        return {}
 
 class InstitutesAPI(Resource):
     ''' returns a list of institutions '''
@@ -156,13 +194,84 @@ class SportsAPI(Resource):
         db.session.commit()
         return {}, 201
 
+class SportAPI(Resource):
+
+    def get(self, id):
+        sport = Sport.query.get_or_404(id)
+        return jsonify({ 'sport' : sport.to_json() })
+
+class EventsAPI(Resource):
+
+    def get(self):
+        events = [event.to_json() for event in Event.query.all()]
+        return jsonify({'events': events})
+
+    def post(self):
+        event = Event().from_json()
+        db.session.add(event)
+        db.session.commit()
+        return {}, 201
+
+class TeamsAPI(Resource):
+    def get(self):
+        teams = [team.to_json() for team in Team.query.all()]
+        return jsonify({'teams': teams})
+
+    def post(self):
+        pass
+        # teams =
+
+class RegisterAPI(Resource):
+    def get(self):
+        regists = [regist.to_json() for regist in TeamEvent.query.all() ]
+        return jsonify({'registrations':regists})
+
+
+    def post(self):
+        json_data = json.loads(request.data)
+        team  = Team().from_json(json_data)
+        events = json_data['events']
+
+        db.session.add(team)
+        db.session.commit()
+
+        for player in json_data['players']:
+            person = Person().from_json(player, team.id)
+            db.session.add(person)
+        db.session.commit()
+
+        for event_id in events:
+            team_event = TeamEvent(event_id, team.id)
+            db.session.add(team_event)
+        db.session.commit()
+
+        return 201
+
+
+        return jsonify({'input' : json_data })
+        # return jsonify({'input': request.data.to_dict() })
+    #     create_a_team
+    #
+    #     # team = Team()
+    #     # pass
+
+class PlayersAPI(Resource):
+    def get(self):
+        players = [player.to_json() for player in Person.query.all()]
+        return jsonify({'players': players})
 
 # routes
+# team
 api.add_resource(InstitutesAPI, '/api/institutes/')
 api.add_resource(InstituteAPI, '/api/institute/<int:id>')
 api.add_resource(SportsAPI, '/api/sports/')
-
+api.add_resource(SportAPI, '/api/sport/<int:id>')
+api.add_resource(EventsAPI, '/api/events/')
+api.add_resource(TeamsAPI, '/api/teams/')
+api.add_resource(RegisterAPI, '/api/register/')
+api.add_resource(PlayersAPI, '/api/players/')
 
 if __name__ == '__main__':
     db.create_all()
-    app.run(debug=True)
+    # app.run(debug=True)
+    app.run()
